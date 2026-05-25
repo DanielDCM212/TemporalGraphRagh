@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  confluence:
+    image: atlassian/confluence-server:8.5
+    container_name: confluence
+    depends_on:
+      - postgresC
+    ports:
+      - "8090:8090"
+      - "8091:8091"
+    environment:
+      ATL_JDBC_URL: jdbc:postgresql://postgresC:5432/confluencedb
+      ATL_JDBC_USER: confluence
+      ATL_JDBC_PASSWORD: confluence_password
+      ATL_DB_TYPE: postgresql
+      ATL_DB_DRIVER: org.postgresql.Driver
+    volumes:
+      - confluence-data:/var/atlassian/application-data/confluence
+    restart: unless-stopped
+    networks:
+      - confluence-net
+
+  postgresC:
+    image: postgres:15
+    container_name: confluence-postgres
+    environment:
+      POSTGRES_DB: confluencedb
+      POSTGRES_USER: confluence
+      POSTGRES_PASSWORD: confluence_password
+    volumes:
+      - postgresC-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - confluence-net
+
+volumes:
+  confluence-data:
+  postgresC-data:
+
+networks:
+  confluence-net:
+    driver: bridge
