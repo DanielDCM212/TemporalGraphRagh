@@ -126,6 +126,7 @@ async def run_batch(
     space_key: str,
     start_date: Optional[datetime],
     end_date: Optional[datetime],
+    page_ids: Optional[List[str]] = None,
 ) -> None:
     ingestion_cfg  = IngestionConfig()
     extraction_cfg = ExtractionConfig()
@@ -137,13 +138,17 @@ async def run_batch(
     client   = ConfluenceClient(ingestion_cfg)
     log      = IngestionLog(ingestion_cfg)
     pipeline = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db)
+    ingestor = BatchIngestor(ingestion_cfg, client, log)
 
-    await BatchIngestor(ingestion_cfg, client, log).run(
-        space_key=space_key,
-        pipeline=pipeline,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    if page_ids:
+        await ingestor.run_pages(space_key=space_key, pipeline=pipeline, page_ids=page_ids)
+    else:
+        await ingestor.run(
+            space_key=space_key,
+            pipeline=pipeline,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     await pipeline._extractor.close()
     await pipeline._builder.close()
@@ -204,11 +209,21 @@ def main() -> None:
                         help="[batch only] ingest pages on or after this date")
     parser.add_argument("--end", type=_parse_date, metavar="YYYY-MM-DD",
                         help="[batch only] ingest pages on or before this date")
+    parser.add_argument("--pages", metavar="ID1,ID2,...",
+                        help="[batch only] comma-separated Confluence page IDs to ingest; "
+                             "skips full space iteration")
     args = parser.parse_args()
 
+    page_ids: Optional[List[str]] = (
+        [p.strip() for p in args.pages.split(",") if p.strip()]
+        if args.pages else None
+    )
+
     if args.mode == "batch":
-        asyncio.run(run_batch(args.space, args.start, args.end))
+        asyncio.run(run_batch(args.space, args.start, args.end, page_ids))
     else:
+        if page_ids:
+            parser.error("--pages is only supported with --mode batch")
         asyncio.run(run_incremental(args.space))
 
 
