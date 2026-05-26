@@ -21,7 +21,7 @@ dependencies = [
     # AI / LLM / Embeddings
     "google-cloud-aiplatform",
     "langchain",
-    "langchain-google-vertexai",
+    "langchain-google-genai",
     # Table Normalization
     "rapidfuzz",
     "scikit-learn",
