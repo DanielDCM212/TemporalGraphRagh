@@ -26,7 +26,8 @@ class GraphConfig(BaseSettings):
     neo4j_user:     str = ""
     neo4j_password: str = ""
 
-    # Vertex AI — used by Graphiti's LLM + embedder
+    # Gemini (Google AI / Vertex AI for Graphiti)
+    google_api_key:  str = ""
     gcp_project:     str = ""
     gcp_location:    str = "us-central1"
     gemini_model:    str = "gemini-2.0-flash-001"

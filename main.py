@@ -103,10 +103,7 @@ def build_pipeline(
 ) -> FullPagePipeline:
     normalizer = IncrementalNormalizer(
         config=ingestion_cfg,
-        classifier=TableClassifier(
-            project=graph_cfg.gcp_project,
-            location=graph_cfg.gcp_location,
-        ),
+        classifier=TableClassifier(google_api_key=graph_cfg.google_api_key),
         store=CanonicalSchemaStore(ingestion_cfg),
     )
 

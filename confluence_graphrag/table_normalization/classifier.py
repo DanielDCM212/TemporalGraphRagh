@@ -56,24 +56,22 @@ Respond ONLY with valid JSON in this exact structure:
 
 class TableClassifier:
     """
-    Calls Gemini Pro via LangChain to assign a canonical schema to each cluster
+    Calls Gemini via LangChain to assign a canonical schema to each cluster
     of fingerprints.  The LLM is initialized lazily so the class can be
-    instantiated without Vertex AI credentials (e.g. in tests).
+    instantiated without API credentials (e.g. in tests).
     """
 
-    def __init__(self, project: str, location: str = "us-central1") -> None:
-        self._project = project
-        self._location = location
+    def __init__(self, google_api_key: str = "") -> None:
+        self._google_api_key = google_api_key or None
         self._llm = None  # lazy init
 
     def _get_llm(self):
         if self._llm is None:
-            from langchain_google_vertexai import ChatVertexAI
-            self._llm = ChatVertexAI(
-                model_name="gemini-2.0-flash-001",
-                project=self._project,
-                location=self._location,
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            self._llm = ChatGoogleGenerativeAI(
+                model="gemini-2.0-flash-001",
                 temperature=0,
+                google_api_key=self._google_api_key,
             )
         return self._llm
 
