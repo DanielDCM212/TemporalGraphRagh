@@ -13,13 +13,9 @@ _DEFAULT_MODEL = "models/text-embedding-004"
 
 
 class EmbeddingService:
-    """
-    Lazy wrapper around Google GenerativeAI text embeddings.
-    If google_api_key is empty the GOOGLE_API_KEY env var is used.
-    """
+    """Lazy wrapper around Google GenerativeAI text embeddings (auth via ADC)."""
 
-    def __init__(self, google_api_key: str = "", model: str = _DEFAULT_MODEL) -> None:
-        self._api_key = google_api_key or None
+    def __init__(self, model: str = _DEFAULT_MODEL) -> None:
         self._model = model
         self._embedder = None
 

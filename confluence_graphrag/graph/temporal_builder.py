@@ -12,6 +12,8 @@ from .models import GraphEdge, GraphNode, RowEmbedding
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_EMBEDDING_MODEL = "models/text-embedding-004"
+
 
 class TemporalGraphBuilder:
     """
@@ -205,18 +207,15 @@ class TemporalGraphBuilder:
     # Embedding (Stage 6)
     # ------------------------------------------------------------------
 
-    def _get_embedder(self) -> Optional[EmbeddingService]:
+    def _get_embedder(self) -> EmbeddingService:
         if self._embedder is None:
-            api_key = self._config.google_api_key if self._config else ""
-            if api_key:
-                self._embedder = EmbeddingService(google_api_key=api_key)
+            self._embedder = EmbeddingService(
+                model=self._config.embedding_model if self._config else _DEFAULT_EMBEDDING_MODEL,
+            )
         return self._embedder
 
     async def _embed_page(self, entity_set: EntitySet, content_tree: ContentTree) -> None:
         embedder = self._get_embedder()
-        if embedder is None:
-            return
-
         page_id   = entity_set.page_id
         page_date = entity_set.page_date
 

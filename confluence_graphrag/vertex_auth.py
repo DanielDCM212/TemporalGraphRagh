@@ -1,16 +1,31 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Optional
 
 from google.oauth2.credentials import Credentials
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
 _genai_client = None
 
 _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
+
+class _VertexSettings(BaseSettings):
+    gcp_project: str = ""
+    gcp_location: str = "us-central1"
+    vertex_api_endpoint: str = ""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+_settings = _VertexSettings()
 
 
 def _default_credentials() -> Credentials:
@@ -32,11 +47,11 @@ def get_genai_client(
 
     Resolution order for each setting:
       1. Argument passed to this call
-      2. Environment variables: GCP_PROJECT, GCP_LOCATION
+      2. .env file / environment variables: GCP_PROJECT, GCP_LOCATION
       3. Built-in default (location → "us-central1")
 
-    When VERTEX_API_ENDPOINT is set, the Vertex AI client is pointed at that
-    custom endpoint (e.g. a private service endpoint or a local emulator).
+    When VERTEX_API_ENDPOINT is set in .env or the environment, the Vertex AI
+    client is pointed at that custom endpoint.
 
     The client is cached after the first successful call; subsequent calls
     ignore any arguments and return the cached instance.
@@ -47,9 +62,9 @@ def get_genai_client(
 
     import google.genai as genai
 
-    _project = project or os.getenv("GCP_PROJECT", "")
-    _location = location or os.getenv("GCP_LOCATION", "us-central1")
-    _endpoint = os.getenv("VERTEX_API_ENDPOINT", "")
+    _project = project or _settings.gcp_project
+    _location = location or _settings.gcp_location
+    _endpoint = _settings.vertex_api_endpoint
     _creds = credentials or _default_credentials()
 
     if _project:
