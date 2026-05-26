@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from .models import GraphEdge, GraphNode
+from .models import GraphEdge, GraphNode, RowEmbedding
 
 
 class GraphStoreAdapter(ABC):
@@ -63,6 +63,39 @@ class GraphStoreAdapter(ABC):
         Return Event nodes that reference app_id, ordered newest-first.
         If before_date is set, only events on or before that date are returned.
         """
+        ...
+
+    @abstractmethod
+    async def update_node_embedding(
+        self, node_id: str, text: str, embedding: List[float]
+    ) -> None:
+        """Store embedding vector + source text on an existing node."""
+        ...
+
+    @abstractmethod
+    async def upsert_row_embeddings(self, rows: List[RowEmbedding]) -> None:
+        """Bulk upsert per-row table embeddings into the row embeddings collection."""
+        ...
+
+    @abstractmethod
+    async def vector_search_nodes(
+        self,
+        query_embedding: List[float],
+        node_types: List[str],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[GraphNode, float]]:
+        """Cosine similarity search over graph_nodes. Returns (node, similarity) pairs."""
+        ...
+
+    @abstractmethod
+    async def vector_search_rows(
+        self,
+        query_embedding: List[float],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[RowEmbedding, float]]:
+        """Cosine similarity search over table row embeddings."""
         ...
 
     @abstractmethod

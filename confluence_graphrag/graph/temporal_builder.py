@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from ..entity_extraction.models import EntitySet
 from ..parser.models import ContentTree, TextStyle
 from .adapter import GraphStoreAdapter
+from .embedder import EmbeddingService, build_event_text, build_page_text, build_row_text
 from .factory import GraphConfig
-from .models import GraphEdge, GraphNode
+from .models import GraphEdge, GraphNode, RowEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,10 @@ class TemporalGraphBuilder:
         adapter: GraphStoreAdapter,
         config: Optional[GraphConfig] = None,
     ) -> None:
-        self._adapter = adapter
-        self._config  = config or GraphConfig()
-        self._graphiti = None  # initialised lazily
+        self._adapter  = adapter
+        self._config   = config or GraphConfig()
+        self._graphiti = None   # initialised lazily
+        self._embedder: Optional[EmbeddingService] = None  # initialised lazily
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,7 +133,10 @@ class TemporalGraphBuilder:
                     relation="HAS_EVENT",
                 ))
 
-        # 7. Graphiti episodic memory
+        # 7. Embeddings (page, events, table rows)
+        await self._embed_page(entity_set, content_tree)
+
+        # 8. Graphiti episodic memory
         await self._add_graphiti_episode(entity_set, content_tree)
 
         logger.info(
@@ -195,6 +200,83 @@ class TemporalGraphBuilder:
             target_id=node_id,
             relation="REFERENCES_PROJ",
         ))
+
+    # ------------------------------------------------------------------
+    # Embedding (Stage 6)
+    # ------------------------------------------------------------------
+
+    def _get_embedder(self) -> Optional[EmbeddingService]:
+        if self._embedder is None:
+            api_key = self._config.google_api_key if self._config else ""
+            if api_key:
+                self._embedder = EmbeddingService(google_api_key=api_key)
+        return self._embedder
+
+    async def _embed_page(self, entity_set: EntitySet, content_tree: ContentTree) -> None:
+        embedder = self._get_embedder()
+        if embedder is None:
+            return
+
+        page_id   = entity_set.page_id
+        page_date = entity_set.page_date
+
+        # Build all texts in one list to batch the API call
+        page_text = build_page_text(content_tree)
+
+        event_texts = [
+            build_event_text(ev, content_tree.page_title, page_date)
+            for ev in entity_set.events
+        ]
+
+        row_items: List[tuple] = []  # (table_id, row_index, text, timestamp)
+        for table in content_tree.tables:
+            table_id = f"{page_id}_table_{table.table_index}"
+            for row_idx, row in enumerate(table.cells):
+                text = build_row_text(table.headers, row)
+                if text:
+                    row_items.append((table_id, row_idx, text, page_date))
+
+        all_texts = [page_text] + event_texts + [r[2] for r in row_items]
+
+        try:
+            all_embeddings = await embedder.aembed_many(all_texts)
+        except Exception as exc:
+            logger.error("Embedding API failed for page %s: %s", page_id, exc)
+            return
+
+        # Distribute embeddings back to their targets
+        idx = 0
+
+        await self._adapter.update_node_embedding(
+            f"page_{page_id}", page_text, all_embeddings[idx]
+        )
+        idx += 1
+
+        for ev_idx, ev_text in enumerate(event_texts):
+            await self._adapter.update_node_embedding(
+                f"event_{page_id}_{ev_idx}", ev_text, all_embeddings[idx]
+            )
+            idx += 1
+
+        row_embeddings: List[RowEmbedding] = []
+        for (table_id, row_idx, row_text, ts), emb in zip(row_items, all_embeddings[idx:]):
+            row_embeddings.append(RowEmbedding(
+                id=f"{table_id}__row_{row_idx}",
+                table_id=table_id,
+                page_id=page_id,
+                row_index=row_idx,
+                text=row_text,
+                embedding=emb,
+                timestamp=ts,
+            ))
+
+        if row_embeddings:
+            await self._adapter.upsert_row_embeddings(row_embeddings)
+
+        logger.debug(
+            "Embedded page %s — 1 page + %d events + %d rows",
+            page_id, len(event_texts), len(row_embeddings),
+        )
 
     # ------------------------------------------------------------------
     # Graphiti episodic memory

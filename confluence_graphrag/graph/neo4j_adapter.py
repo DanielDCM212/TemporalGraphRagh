@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .adapter import GraphStoreAdapter
-from .models import GraphEdge, GraphNode
+from .models import GraphEdge, GraphNode, RowEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,32 @@ class Neo4jAdapter(GraphStoreAdapter):
             result = await session.run(cypher, **params)
             records = await result.data()
         return [_record_to_node(r["n"]) for r in records]
+
+    async def update_node_embedding(
+        self, node_id: str, text: str, embedding: List[float]
+    ) -> None:
+        # TODO: implement with Neo4j GDS vector index
+        raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
+
+    async def upsert_row_embeddings(self, rows: List[RowEmbedding]) -> None:
+        raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
+
+    async def vector_search_nodes(
+        self,
+        query_embedding: List[float],
+        node_types: List[str],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[GraphNode, float]]:
+        raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
+
+    async def vector_search_rows(
+        self,
+        query_embedding: List[float],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[RowEmbedding, float]]:
+        raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
 
     async def close(self) -> None:
         await self._driver.close()
