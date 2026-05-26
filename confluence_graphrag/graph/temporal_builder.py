@@ -290,14 +290,13 @@ class TemporalGraphBuilder:
             return None
 
         try:
-            import google.genai as genai
             from graphiti_core import Graphiti
             from graphiti_core.embedder.gemini import GeminiEmbedder, GeminiEmbedderConfig
             from graphiti_core.llm_client.gemini_client import GeminiClient
             from graphiti_core.llm_client.config import LLMConfig
+            from ..vertex_auth import get_genai_client
 
-            genai_client = genai.Client(
-                vertexai=True,
+            genai_client = get_genai_client(
                 project=self._config.gcp_project,
                 location=self._config.gcp_location,
             )

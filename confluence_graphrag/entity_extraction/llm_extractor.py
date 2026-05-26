@@ -28,14 +28,10 @@ class LLMEntityExtractor:
 
     def _get_llm(self):
         if self._llm is None:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            from langchain.output_parsers import PydanticOutputParser
+            from langchain_core.output_parsers import PydanticOutputParser
+            from ..vertex_auth import get_chat_llm
 
-            self._llm = ChatGoogleGenerativeAI(
-                model=self._config.gemini_model,
-                temperature=0,
-                google_api_key=self._config.google_api_key or None,
-            )
+            self._llm = get_chat_llm(model=self._config.gemini_model)
             self._parser = PydanticOutputParser(pydantic_object=LLMExtractionResult)
         return self._llm, self._parser
 

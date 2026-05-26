@@ -30,7 +30,7 @@ class GraphConfig(BaseSettings):
     google_api_key:  str = ""
     gcp_project:     str = ""
     gcp_location:    str = "us-central1"
-    gemini_model:    str = "gemini-2.0-flash-001"
+    gemini_model:    str = "gemini-2.5-flash"
     embedding_model: str = "text-embedding-004"
 
     # Graphiti episodic memory layer (requires Neo4j)

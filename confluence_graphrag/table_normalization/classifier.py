@@ -67,12 +67,8 @@ class TableClassifier:
 
     def _get_llm(self):
         if self._llm is None:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            self._llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-001",
-                temperature=0,
-                google_api_key=self._google_api_key,
-            )
+            from ..vertex_auth import get_chat_llm
+            self._llm = get_chat_llm(model="gemini-2.5-flash")
         return self._llm
 
     def classify_clusters(

@@ -25,11 +25,8 @@ class EmbeddingService:
 
     def _get_embedder(self):
         if self._embedder is None:
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            self._embedder = GoogleGenerativeAIEmbeddings(
-                model=self._model,
-                google_api_key=self._api_key,
-            )
+            from ..vertex_auth import get_embeddings
+            self._embedder = get_embeddings(model=self._model)
         return self._embedder
 
     def embed(self, text: str) -> List[float]:

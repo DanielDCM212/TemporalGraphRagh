@@ -11,7 +11,7 @@ class ExtractionConfig(BaseSettings):
 
     # Gemini (Google AI)
     google_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash-001"
+    gemini_model: str = "gemini-2.5-flash"
 
     # MongoDB (shared with ingestion config — read from same .env)
     mongodb_uri: str = "mongodb://localhost:27017"

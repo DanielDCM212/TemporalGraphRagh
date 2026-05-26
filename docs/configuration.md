@@ -72,7 +72,7 @@ Only required if `GRAPH_BACKEND=neo4j` or `GRAPHITI_ENABLED=true`.
 | `VALIDATION_API_KEY` | No | — | Bearer token for the validation API |
 | `VALIDATION_API_TIMEOUT` | No | `10.0` | Seconds before a validation call times out |
 | `VALIDATION_CONCURRENCY` | No | `10` | Max concurrent validation API calls |
-| `GEMINI_MODEL` | No | `gemini-2.0-flash-001` | Gemini model for LLM tasks |
+| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model for LLM tasks |
 | `EMBEDDING_MODEL` | No | `text-embedding-004` | Google embedding model |
 
 ---
