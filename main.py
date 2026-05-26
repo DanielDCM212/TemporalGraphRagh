@@ -24,19 +24,16 @@ from typing import List, Optional
 
 import motor.motor_asyncio
 
-from confluence_graphrag.entity_extraction import ExtractionConfig, PageEntityExtractor
-from confluence_graphrag.graph import GraphConfig, TemporalGraphBuilder, create_adapter
+from confluence_graphrag.entity_extraction import ExtractionConfig
+from confluence_graphrag.graph import GraphConfig
 from confluence_graphrag.ingestion.batch_ingestor import BatchIngestor
 from confluence_graphrag.ingestion.confluence_client import ConfluenceClient
 from confluence_graphrag.ingestion.config import IngestionConfig
 from confluence_graphrag.ingestion.incremental_watcher import IncrementalWatcher
-from confluence_graphrag.ingestion.models import PageMetadata, PagePipeline
+from confluence_graphrag.ingestion.models import PagePipeline
 from confluence_graphrag.ingestion.upsert_handler import UpsertHandler
 from confluence_graphrag.ingestion.ingestion_log import IngestionLog
-from confluence_graphrag.parser.html_parser import HTMLContentParser
-from confluence_graphrag.table_normalization.classifier import TableClassifier
-from confluence_graphrag.table_normalization.normalizer import IncrementalNormalizer
-from confluence_graphrag.table_normalization.schema_store import CanonicalSchemaStore
+from confluence_graphrag.pipeline import FullPagePipeline, build_pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,75 +41,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Full pipeline — implements the PagePipeline protocol
-# ---------------------------------------------------------------------------
-
-class FullPagePipeline:
-    """
-    Wires Stage 2 → 3B → 4 → 5 into a single ingest() call.
-
-    Stage 1 (BatchIngestor / IncrementalWatcher) calls ingest() for each page.
-
-    Stage 3B note: IncrementalNormalizer is used for both batch and incremental
-    modes.  It creates AUTO_APPROVED schemas on first encounter of a new table
-    type.  If you need the two-step PENDING_APPROVAL workflow for historical
-    data, run BatchNormalizer.prepare_schemas() separately before ingestion.
-    """
-
-    def __init__(
-        self,
-        normalizer: IncrementalNormalizer,
-        extractor: PageEntityExtractor,
-        builder: TemporalGraphBuilder,
-    ) -> None:
-        self._normalizer = normalizer
-        self._extractor  = extractor
-        self._builder    = builder
-
-    async def ingest(self, metadata: PageMetadata) -> None:
-        # Stage 2 — HTML → ContentTree
-        parser = HTMLContentParser(metadata.page_id, metadata.title)
-        content_tree = parser.parse(metadata.html_content)
-
-        # Stage 3B — normalize each table (returns NormalizedRow list or None)
-        for table in content_tree.tables:
-            await self._normalizer.normalize_table(table)
-
-        # Stage 4 — entity extraction → EntitySet
-        entity_set = await self._extractor.extract(content_tree)
-
-        # Stage 5 — build / update temporal graph
-        await self._builder.ingest_page(entity_set, content_tree)
-
-    async def soft_delete_page(self, page_id: str) -> None:
-        await self._builder._adapter.soft_delete_page(page_id)
-
-
-# ---------------------------------------------------------------------------
-# Dependency wiring
-# ---------------------------------------------------------------------------
-
-def build_pipeline(
-    ingestion_cfg: IngestionConfig,
-    extraction_cfg: ExtractionConfig,
-    graph_cfg: GraphConfig,
-    db: motor.motor_asyncio.AsyncIOMotorDatabase,
-) -> FullPagePipeline:
-    normalizer = IncrementalNormalizer(
-        config=ingestion_cfg,
-        classifier=TableClassifier(google_api_key=graph_cfg.google_api_key),
-        store=CanonicalSchemaStore(ingestion_cfg),
-    )
-
-    extractor = PageEntityExtractor(config=extraction_cfg, db=db)
-
-    adapter = create_adapter(graph_cfg)
-    builder = TemporalGraphBuilder(adapter=adapter, config=graph_cfg)
-
-    return FullPagePipeline(normalizer, extractor, builder)
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +75,7 @@ async def run_batch(
             end_date=end_date,
         )
 
-    await pipeline._extractor.close()
-    await pipeline._builder.close()
+    await pipeline.close()
     await client.close()
     mongo.close()
     logger.info("Batch ingestion complete.")
@@ -180,8 +107,7 @@ async def run_incremental(space_key: str) -> None:
     await stop_event.wait()
 
     watcher.stop()
-    await pipeline._extractor.close()
-    await pipeline._builder.close()
+    await pipeline.close()
     await client.close()
     mongo.close()
     logger.info("Incremental watcher stopped.")
