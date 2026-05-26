@@ -34,9 +34,22 @@ services:
     networks:
       - confluence-net
 
+  mongodb:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: mongodb-vector-db
+    environment:
+      - MONGODB_INITDB_ROOT_USERNAME=admin
+      - MONGODB_INITDB_ROOT_PASSWORD=password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodbC_data:/data/db
+    restart: always
+
 volumes:
   confluence-data:
   postgresC-data:
+  mongodbC_data:
 
 networks:
   confluence-net:
