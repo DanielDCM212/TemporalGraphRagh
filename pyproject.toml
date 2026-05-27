@@ -47,6 +47,7 @@ dependencies = [
     # Config
     "python-dotenv",
     "ipykernel>=7.2.0",
+    "google-adk[a2a]==1.29.0",
 ]
 
 [dependency-groups]
