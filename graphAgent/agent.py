@@ -6,6 +6,7 @@ from .tools import (
     get_project_events,
     get_project_info,
     get_project_latest_snapshot,
+    search_graph_nodes,
     search_meeting_content,
 )
 
@@ -40,7 +41,8 @@ of the request. Use the following strategy:
 | "question about a specific concept (approvals, risks, decisions, tasks...)" | `get_project_latest_snapshot` first; if more history is needed also call `get_project_events` with a broader date range |
 | "applications linked to project X" | `get_applications_for_project` |
 | "question about a specific application" | `get_application_events` |
-| "open-ended question with no IDs" | `search_meeting_content` with the key phrase from the query |
+| "open-ended question with no IDs" | `search_graph_nodes` first to find relevant meetings/events, then `search_meeting_content` for matching row-level detail |
+| "find meetings or context about a topic" | `search_graph_nodes(node_types=["ConfPage","Event"])` to locate relevant pages/events by semantic similarity |
 
 You may call multiple tools in sequence if the first result is insufficient.
 Never filter by a database field to answer a semantic question — always retrieve
@@ -85,5 +87,6 @@ root_agent = Agent(
         get_applications_for_project,
         get_application_events,
         search_meeting_content,
+        search_graph_nodes,
     ],
 )

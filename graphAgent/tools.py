@@ -1,5 +1,8 @@
+import asyncio
 from datetime import datetime
 from typing import Optional
+
+import numpy as np
 
 from .mongo_client import get_db
 
@@ -12,6 +15,9 @@ def _serialize(doc: dict) -> dict:
     for k, v in doc.items():
         if k == "_id":
             out[k] = str(v)
+        elif k == "embedding":
+            # Never return raw embedding vectors to the agent
+            continue
         elif isinstance(v, datetime):
             out[k] = v.isoformat()
         elif isinstance(v, dict):
@@ -27,6 +33,51 @@ def _serialize(doc: dict) -> dict:
             out[k] = v
     return out
 
+
+# ── Embedding helper ────────────────────────────────────────────────────────
+
+_embedder = None
+
+
+def _get_embedder():
+    global _embedder
+    if _embedder is None:
+        from confluence_graphrag.graph.embedder import EmbeddingService
+        _embedder = EmbeddingService()
+    return _embedder
+
+
+async def _embed_query(text: str) -> list[float]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _get_embedder().embed, text)
+
+
+def _cosine_top_k(query_emb: list[float], docs: list[dict], k: int) -> list[tuple[dict, float]]:
+    """Return up to k docs ranked by cosine similarity to query_emb."""
+    if not docs:
+        return []
+    q = np.array(query_emb, dtype=np.float32)
+    q_norm = np.linalg.norm(q)
+    if q_norm < 1e-10:
+        return []
+    q /= q_norm
+
+    scored = []
+    for doc in docs:
+        emb = doc.get("embedding")
+        if not emb:
+            continue
+        e = np.array(emb, dtype=np.float32)
+        e_norm = np.linalg.norm(e)
+        if e_norm < 1e-10:
+            continue
+        scored.append((doc, float(np.dot(q, e / e_norm))))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:k]
+
+
+# ── Tools ───────────────────────────────────────────────────────────────────
 
 async def get_project_info(project_id: str) -> dict:
     """
@@ -113,7 +164,6 @@ async def get_applications_for_project(project_id: str) -> list[dict]:
     """
     db = get_db()
 
-    # Collect unique app_ids from events that reference this project
     cursor = db.graph_nodes.find(
         {
             "type": "Event",
@@ -216,7 +266,6 @@ async def get_project_latest_snapshot(project_id: str) -> dict:
     """
     db = get_db()
 
-    # Step 1: find the most recent event for this project
     latest = await db.graph_nodes.find_one(
         {"type": "Event", "is_deleted": False, "properties.project_ids": project_id},
         sort=[("timestamp", -1)],
@@ -227,7 +276,6 @@ async def get_project_latest_snapshot(project_id: str) -> dict:
     page_id = latest.get("properties", {}).get("page_id")
     meeting_date = latest.get("timestamp")
 
-    # Step 2: fetch all events from that page that reference this project
     cursor = db.graph_nodes.find(
         {
             "type": "Event",
@@ -238,7 +286,6 @@ async def get_project_latest_snapshot(project_id: str) -> dict:
     ).sort("timestamp", 1)
     events = await cursor.to_list(length=None)
 
-    # Step 3: fetch ConfPage metadata
     page_node = await db.graph_nodes.find_one(
         {"type": "ConfPage", "_id": f"page_{page_id}", "is_deleted": False}
     )
@@ -258,29 +305,28 @@ async def search_meeting_content(
     limit: int = 10,
 ) -> list[dict]:
     """
-    Full-text search across meeting-minute table rows.
+    Semantic search across meeting-minute table rows using embedding similarity.
 
-    Useful for open-ended queries that are not tied to a specific event type,
-    or when the user asks about content that may be spread across multiple rows.
+    Embeds query_text with the same model used at ingestion time (text-embedding-004)
+    and ranks stored row embeddings by cosine similarity. Use this for open-ended
+    queries not tied to a specific event type, or when content may span many rows.
 
     Args:
-        query_text: Keywords or phrase to search for.
-        project_id: Optional project ID to narrow results to pages that
+        query_text: Natural-language question or phrase to search for.
+        project_id: Optional project ID to restrict the search to pages that
             reference that project.
-        app_id: Optional application ID to narrow results similarly.
-        limit: Maximum results (default 10).
+        app_id: Optional application ID to restrict similarly.
+        limit: Maximum results to return (default 10).
 
     Returns:
-        List of matching row-level records with 'text', 'table_id',
-        'page_id', and 'timestamp'. Ordered most-recent first.
+        List of matching row records with 'text', 'table_id', 'page_id',
+        'row_index', 'timestamp', and 'similarity_score'. Ordered by
+        descending semantic similarity.
     """
     db = get_db()
 
-    base_query: dict = {
-        "is_deleted": False,
-        "text": {"$regex": query_text, "$options": "i"},
-    }
-
+    # Optionally restrict to pages that reference the given project / app
+    page_ids: Optional[list] = None
     if project_id or app_id:
         event_filter: dict = {"type": "Event", "is_deleted": False}
         if project_id:
@@ -299,16 +345,73 @@ async def search_meeting_content(
                 if "page_id" in e.get("properties", {})
             }
         )
-        if page_ids:
-            base_query["page_id"] = {"$in": page_ids}
 
-    cursor = (
-        db.graph_row_embeddings.find(
-            base_query,
-            {"text": 1, "table_id": 1, "page_id": 1, "timestamp": 1, "row_index": 1},
-        )
-        .sort("timestamp", -1)
-        .limit(limit)
-    )
-    docs = await cursor.to_list(length=limit)
-    return [_serialize(d) for d in docs]
+    # Load candidate rows (with their embeddings)
+    row_query: dict = {"is_deleted": False, "embedding": {"$exists": True}}
+    if page_ids is not None:
+        if not page_ids:
+            return []  # project/app exists but has no associated pages
+        row_query["page_id"] = {"$in": page_ids}
+
+    docs = await db.graph_row_embeddings.find(
+        row_query,
+        {"text": 1, "table_id": 1, "page_id": 1, "row_index": 1, "timestamp": 1, "embedding": 1},
+    ).to_list(length=None)
+
+    # Embed the query and rank
+    query_emb = await _embed_query(query_text)
+    ranked = _cosine_top_k(query_emb, docs, limit)
+
+    results = []
+    for doc, score in ranked:
+        entry = _serialize(doc)
+        entry["similarity_score"] = round(score, 4)
+        results.append(entry)
+    return results
+
+
+async def search_graph_nodes(
+    query_text: str,
+    node_types: Optional[list[str]] = None,
+    limit: int = 10,
+) -> list[dict]:
+    """
+    Semantic search across the knowledge graph nodes using embedding similarity.
+
+    Searches ConfPage, Event, Application, and Project nodes stored in graph_nodes.
+    Use this to find relevant meetings, decisions, or entities when you don't yet
+    have a specific project_id or app_id to start from.
+
+    Args:
+        query_text: Natural-language question or phrase.
+        node_types: Optional list to restrict search to specific node types.
+            Valid values: 'ConfPage', 'Event', 'Application', 'Project'.
+            Defaults to ['ConfPage', 'Event'].
+        limit: Maximum results to return (default 10).
+
+    Returns:
+        List of node dicts with 'type', 'properties', 'timestamp', and
+        'similarity_score'. Ordered by descending semantic similarity.
+    """
+    db = get_db()
+
+    types = node_types if node_types else ["ConfPage", "Event"]
+
+    docs = await db.graph_nodes.find(
+        {
+            "type": {"$in": types},
+            "is_deleted": False,
+            "embedding": {"$exists": True},
+        },
+        {"type": 1, "properties": 1, "timestamp": 1, "embedding": 1},
+    ).to_list(length=None)
+
+    query_emb = await _embed_query(query_text)
+    ranked = _cosine_top_k(query_emb, docs, limit)
+
+    results = []
+    for doc, score in ranked:
+        entry = _serialize(doc)
+        entry["similarity_score"] = round(score, 4)
+        results.append(entry)
+    return results
