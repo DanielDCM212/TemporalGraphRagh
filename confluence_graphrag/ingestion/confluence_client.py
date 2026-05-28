@@ -21,7 +21,7 @@ _DATE_PATTERNS = [
 ]
 
 
-def _parse_date_from_title(title: str) -> datetime:
+def _parse_date_from_title(title: str) -> Optional[datetime]:
     for pattern, fmt in _DATE_PATTERNS:
         match = re.search(pattern, title)
         if match:
@@ -29,8 +29,7 @@ def _parse_date_from_title(title: str) -> datetime:
                 return datetime.strptime(match.group(1), fmt)
             except ValueError:
                 continue
-    logger.warning("Could not extract date from page title '%s'", title)
-    return datetime.min
+    return None
 
 
 def _parse_confluence_timestamp(ts: str) -> datetime:
@@ -51,8 +50,9 @@ class ConfluenceClient:
         self._sdk = Confluence(
             url=config.confluence_url,
             username=config.confluence_username,
-            password=config.confluence_api_token,
+            token=config.confluence_api_token,
             cloud=config.confluence_cloud,
+            verify=config.confluence_verify_ssl,
         )
         self._http = httpx.AsyncClient(
             auth=(config.confluence_username, config.confluence_api_token),
@@ -92,18 +92,17 @@ class ConfluenceClient:
                 start=offset,
                 limit=limit,
                 status='current',
-                expand='body.storage,version,history.lastUpdated',
+                expand='body.storage,body.view,version,history.lastUpdated',
             )
             if not batch:
                 break
 
             for raw in batch:
                 page = self._parse_page(raw, space_key)
-                if page.page_date != datetime.min:
-                    if start_date and page.page_date < start_date:
-                        continue
-                    if end_date and page.page_date > end_date:
-                        continue
+                if start_date and page.page_date < start_date:
+                    continue
+                if end_date and page.page_date > end_date:
+                    continue
                 pages.append(page)
 
             if len(batch) < limit:
@@ -120,7 +119,7 @@ class ConfluenceClient:
         raw = await asyncio.to_thread(
             self._sdk.get_page_by_id,
             page_id,
-            expand='body.storage,version,history.lastUpdated',
+            expand='body.storage,body.view,version,history.lastUpdated',
         )
         return self._parse_page(raw, space_key='')
 
@@ -156,7 +155,7 @@ class ConfluenceClient:
     def _parse_page(self, raw: dict, space_key: str) -> PageMetadata:
         title = raw['title']
 
-        html_content = raw.get('body', {}).get('storage', {}).get('value', '')
+        html_content = raw.get('body', {}).get('view', {}).get('value', '')
 
         version_when = (
             raw.get('version', {}).get('when')
@@ -166,11 +165,16 @@ class ConfluenceClient:
             _parse_confluence_timestamp(version_when) if version_when else datetime.min
         )
 
+        page_date = _parse_date_from_title(title)
+        if page_date is None:
+            logger.debug("No date in title '%s', using last_modified as page_date", title)
+            page_date = last_modified
+
         return PageMetadata(
             page_id=raw['id'],
             title=title,
             space_key=space_key or raw.get('space', {}).get('key', ''),
             html_content=html_content,
             last_modified=last_modified,
-            page_date=_parse_date_from_title(title),
+            page_date=page_date,
         )

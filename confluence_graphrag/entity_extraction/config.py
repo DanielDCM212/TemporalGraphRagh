@@ -9,9 +9,12 @@ class ExtractionConfig(BaseSettings):
     validation_api_timeout: float = 10.0
     validation_concurrency: int = Field(default=10, ge=1)   # semaphore limit
 
-    # Gemini (Google AI)
+    # Gemini / Vertex AI
     google_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    gcp_project: str = ""
+    gcp_location: str = "us-central1"
+    vertex_ai_endpoint: str = ""
 
     # MongoDB (shared with ingestion config — read from same .env)
     mongodb_uri: str = "mongodb://localhost:27017"

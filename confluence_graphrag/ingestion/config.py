@@ -8,6 +8,8 @@ class IngestionConfig(BaseSettings):
     confluence_username: str
     confluence_api_token: str
     confluence_cloud: bool = True       # False for Confluence Server / Data Center
+    confluence_verify_ssl: bool = True
+    confluence_ca_bundle: str = ""      # path to custom CA bundle; empty means use system default
 
     # MongoDB
     mongodb_uri: str = "mongodb://localhost:27017"

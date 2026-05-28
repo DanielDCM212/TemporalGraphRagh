@@ -16,7 +16,7 @@ _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 class _VertexSettings(BaseSettings):
     gcp_project: str = ""
     gcp_location: str = "us-central1"
-    vertex_api_endpoint: str = ""
+    vertex_ai_endpoint: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -64,7 +64,7 @@ def get_genai_client(
 
     _project = project or _settings.gcp_project
     _location = location or _settings.gcp_location
-    _endpoint = _settings.vertex_api_endpoint
+    _endpoint = _settings.vertex_ai_endpoint
     _creds = credentials or _default_credentials()
 
     if _project:
