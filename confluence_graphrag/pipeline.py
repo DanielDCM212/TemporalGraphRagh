@@ -78,7 +78,7 @@ def build_pipeline(
 ) -> FullPagePipeline:
     normalizer = IncrementalNormalizer(
         config=ingestion_cfg,
-        classifier=TableClassifier(google_api_key=graph_cfg.google_api_key),
+        classifier=TableClassifier(config=extraction_cfg),
         store=CanonicalSchemaStore(ingestion_cfg),
     )
     extractor = PageEntityExtractor(config=extraction_cfg, db=db)

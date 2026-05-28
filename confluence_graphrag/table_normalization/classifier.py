@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import List
 
+from ..entity_extraction.config import ExtractionConfig
 from .models import CanonicalSchema, SchemaStatus, TableFingerprint
 
 logger = logging.getLogger(__name__)
@@ -61,14 +62,14 @@ class TableClassifier:
     instantiated without API credentials (e.g. in tests).
     """
 
-    def __init__(self, google_api_key: str = "") -> None:
-        self._google_api_key = google_api_key or None
+    def __init__(self, config: ExtractionConfig | None = None) -> None:
+        self._config = config or ExtractionConfig()
         self._llm = None  # lazy init
 
     def _get_llm(self):
         if self._llm is None:
             from ..vertex_auth import get_chat_llm
-            self._llm = get_chat_llm(model="gemini-2.5-flash")
+            self._llm = get_chat_llm(model=self._config.gemini_model)
         return self._llm
 
     def classify_clusters(

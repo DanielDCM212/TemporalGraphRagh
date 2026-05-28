@@ -32,14 +32,9 @@ async def lifespan(app: FastAPI):
 
     pipeline = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db)
 
-    # Retriever is optional — requires GOOGLE_API_KEY
-    retriever = None
-    if graph_cfg.google_api_key:
-        embedder  = EmbeddingService(google_api_key=graph_cfg.google_api_key)
-        retriever = SemanticRetriever(adapter=adapter, embedder=embedder)
-        logger.info("SemanticRetriever enabled (text-embedding-004)")
-    else:
-        logger.warning("GOOGLE_API_KEY not set — /search endpoint disabled")
+    embedder  = EmbeddingService()
+    retriever = SemanticRetriever(adapter=adapter, embedder=embedder)
+    logger.info("SemanticRetriever enabled (text-embedding-004)")
 
     app.state.pipeline  = pipeline
     app.state.adapter   = adapter

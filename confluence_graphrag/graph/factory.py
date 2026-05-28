@@ -27,11 +27,12 @@ class GraphConfig(BaseSettings):
     neo4j_password: str = ""
 
     # Gemini (Google AI / Vertex AI for Graphiti)
-    google_api_key:  str = ""
-    gcp_project:     str = ""
-    gcp_location:    str = "us-central1"
-    gemini_model:    str = "gemini-2.5-flash"
-    embedding_model: str = "text-embedding-004"
+    google_api_key:   str = ""
+    gcp_project:      str = ""
+    gcp_location:     str = "us-central1"
+    vertex_ai_endpoint: str = ""
+    gemini_model:     str = "gemini-2.5-flash"
+    embedding_model:  str = "text-embedding-004"
 
     # Graphiti episodic memory layer (requires Neo4j)
     graphiti_enabled: bool = False
