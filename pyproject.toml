@@ -46,6 +46,9 @@ dependencies = [
     "loguru",
     # Config
     "python-dotenv",
+    # Graph Explorer UI
+    "streamlit",
+    "pyvis",
     "ipykernel>=7.2.0",
     "google-adk[a2a]==1.29.0",
 ]

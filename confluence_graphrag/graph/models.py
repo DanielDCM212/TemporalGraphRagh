@@ -20,8 +20,10 @@ class GraphNode:
 class GraphEdge:
     source_id: str
     target_id: str
-    relation: str       # CONTAINS | REFERENCES_APP | REFERENCES_PROJ | HAS_EVENT | ...
+    relation: str                    # CONTAINS | REFERENCES_APP | REFERENCES_PROJ | HAS_EVENT | HAS_ATTACHMENT | ...
     properties: Dict = field(default_factory=dict)
+    page_id: Optional[str] = None   # set for every edge created during a page ingest;
+                                    # allows soft_delete_page to remove stale edges in one query
 
 
 @dataclass

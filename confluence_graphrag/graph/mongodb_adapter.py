@@ -60,6 +60,7 @@ class MongoDBAdapter(GraphStoreAdapter):
         await self.edges.create_index([("source_id", pymongo.ASCENDING)])
         await self.edges.create_index([("target_id", pymongo.ASCENDING)])
         await self.edges.create_index([("relation", pymongo.ASCENDING)])
+        await self.edges.create_index([("page_id", pymongo.ASCENDING)])
         # graph_row_embeddings
         await self.row_embeddings.create_index([("page_id", pymongo.ASCENDING)])
         await self.row_embeddings.create_index([("table_id", pymongo.ASCENDING)])
@@ -89,12 +90,14 @@ class MongoDBAdapter(GraphStoreAdapter):
     async def upsert_edge(self, edge: GraphEdge) -> str:
         edge_id = f"{edge.source_id}__{edge.relation}__{edge.target_id}"
         doc = {
-            "_id":       edge_id,
-            "source_id": edge.source_id,
-            "target_id": edge.target_id,
-            "relation":  edge.relation,
+            "_id":        edge_id,
+            "source_id":  edge.source_id,
+            "target_id":  edge.target_id,
+            "relation":   edge.relation,
             "properties": edge.properties or {},
         }
+        if edge.page_id:
+            doc["page_id"] = edge.page_id
         await self.edges.replace_one({"_id": edge_id}, doc, upsert=True)
         return edge_id
 
@@ -115,6 +118,10 @@ class MongoDBAdapter(GraphStoreAdapter):
             {"page_id": page_id, "is_deleted": False},
             {"$set": {"is_deleted": True}},
         )
+        # Hard-delete all edges that belong to this page — provenance-based cleanup.
+        # This removes stale edges (e.g. app→event) that would otherwise orphan
+        # after the target node is soft-deleted above.
+        await self.edges.delete_many({"page_id": page_id})
         deleted = result.modified_count
         if deleted:
             logger.debug("Soft-deleted %d nodes for page %s", deleted, page_id)

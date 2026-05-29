@@ -99,6 +99,7 @@ class TemporalGraphBuilder:
                 target_id=table_id,
                 relation="CONTAINS",
                 properties={"order": table.table_index},
+                page_id=page_id,
             ))
 
         # 4. Application nodes (global — never soft-deleted)
@@ -131,6 +132,7 @@ class TemporalGraphBuilder:
                 source_id=f"page_{page_id}",
                 target_id=event_id,
                 relation="HAS_EVENT",
+                page_id=page_id,
             ))
             # App → Event (for temporal context queries)
             for app_id in event.app_ids:
@@ -138,12 +140,14 @@ class TemporalGraphBuilder:
                     source_id=f"app_{app_id}",
                     target_id=event_id,
                     relation="HAS_EVENT",
+                    page_id=page_id,
                 ))
             for proj_id in event.project_ids:
                 await self._adapter.upsert_edge(GraphEdge(
                     source_id=f"proj_{proj_id}",
                     target_id=event_id,
                     relation="HAS_EVENT",
+                    page_id=page_id,
                 ))
 
         # 7. Attachment nodes
@@ -194,6 +198,7 @@ class TemporalGraphBuilder:
             source_id=f"page_{page_id}",
             target_id=node_id,
             relation="REFERENCES_APP",
+            page_id=page_id,
         ))
 
     async def _upsert_project(self, proj_id: str, page_id: str, page_date) -> None:
@@ -216,6 +221,7 @@ class TemporalGraphBuilder:
             source_id=f"page_{page_id}",
             target_id=node_id,
             relation="REFERENCES_PROJ",
+            page_id=page_id,
         ))
 
     # ------------------------------------------------------------------
@@ -279,6 +285,7 @@ class TemporalGraphBuilder:
                 target_id=node_id,
                 relation="HAS_ATTACHMENT",
                 properties={"filename": att.filename},
+                page_id=page_id,
             ))
 
     # ------------------------------------------------------------------
