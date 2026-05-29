@@ -8,13 +8,13 @@ import numpy as np
 from pymongo import AsyncMongoClient
 
 from .adapter import GraphStoreAdapter
-from .models import GraphEdge, GraphNode, RowEmbedding
+from .models import AttachmentChunk, GraphEdge, GraphNode, RowEmbedding
 
 logger = logging.getLogger(__name__)
 
 # Node types owned by a single page — safe to soft-delete on re-ingest.
 # Application and Project nodes are global and persist across pages.
-_PAGE_OWNED_TYPES = {"ConfPage", "Table", "Event"}
+_PAGE_OWNED_TYPES = {"ConfPage", "Table", "Event", "Attachment"}
 
 
 class MongoDBAdapter(GraphStoreAdapter):
@@ -34,9 +34,10 @@ class MongoDBAdapter(GraphStoreAdapter):
     def __init__(self, connection_string: str, database: str) -> None:
         self._client     = AsyncMongoClient(connection_string)
         self._db         = self._client[database]
-        self.nodes       = self._db["graph_nodes"]
-        self.edges       = self._db["graph_edges"]
-        self.row_embeddings = self._db["graph_row_embeddings"]
+        self.nodes              = self._db["graph_nodes"]
+        self.edges              = self._db["graph_edges"]
+        self.row_embeddings     = self._db["graph_row_embeddings"]
+        self.attachment_chunks  = self._db["graph_attachment_chunks"]
 
     # ------------------------------------------------------------------
     # Index setup (call once at startup)
@@ -64,6 +65,11 @@ class MongoDBAdapter(GraphStoreAdapter):
         await self.row_embeddings.create_index([("table_id", pymongo.ASCENDING)])
         await self.row_embeddings.create_index([("timestamp", pymongo.DESCENDING)])
         await self.row_embeddings.create_index([("is_deleted", pymongo.ASCENDING)])
+        # graph_attachment_chunks
+        await self.attachment_chunks.create_index([("page_id", pymongo.ASCENDING)])
+        await self.attachment_chunks.create_index([("attachment_id", pymongo.ASCENDING)])
+        await self.attachment_chunks.create_index([("timestamp", pymongo.DESCENDING)])
+        await self.attachment_chunks.create_index([("is_deleted", pymongo.ASCENDING)])
 
     # ------------------------------------------------------------------
     # GraphStoreAdapter implementation
@@ -102,6 +108,10 @@ class MongoDBAdapter(GraphStoreAdapter):
             {"$set": {"is_deleted": True}},
         )
         await self.row_embeddings.update_many(
+            {"page_id": page_id, "is_deleted": False},
+            {"$set": {"is_deleted": True}},
+        )
+        await self.attachment_chunks.update_many(
             {"page_id": page_id, "is_deleted": False},
             {"$set": {"is_deleted": True}},
         )
@@ -222,6 +232,33 @@ class MongoDBAdapter(GraphStoreAdapter):
         docs = await self.row_embeddings.find(query).to_list()
         return _cosine_rank_rows(query_embedding, docs, limit)
 
+    async def upsert_attachment_chunks(self, chunks: List[AttachmentChunk]) -> None:
+        for chunk in chunks:
+            doc = {
+                "_id":           chunk.id,
+                "attachment_id": chunk.attachment_id,
+                "page_id":       chunk.page_id,
+                "chunk_index":   chunk.chunk_index,
+                "text":          chunk.text,
+                "embedding":     chunk.embedding,
+                "timestamp":     chunk.timestamp,
+                "is_deleted":    chunk.is_deleted,
+            }
+            await self.attachment_chunks.replace_one({"_id": chunk.id}, doc, upsert=True)
+
+    async def vector_search_attachment_chunks(
+        self,
+        query_embedding: List[float],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[AttachmentChunk, float]]:
+        query: dict = {"is_deleted": False}
+        if before_date:
+            query["timestamp"] = {"$lte": before_date}
+
+        docs = await self.attachment_chunks.find(query).to_list()
+        return _cosine_rank_attachment_chunks(query_embedding, docs, limit)
+
     async def close(self) -> None:
         self._client.close()
 
@@ -270,6 +307,45 @@ def _cosine_rank_nodes(
             continue
         sim = float(np.dot(q, e / e_norm))
         scored.append((to_node(doc), sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored[:limit]
+
+
+def _cosine_rank_attachment_chunks(
+    query_emb: List[float],
+    docs: list,
+    limit: int,
+) -> List[Tuple[AttachmentChunk, float]]:
+    if not docs:
+        return []
+    q = np.array(query_emb, dtype=np.float32)
+    q_norm = np.linalg.norm(q)
+    if q_norm < 1e-10:
+        return []
+    q = q / q_norm
+
+    scored = []
+    for doc in docs:
+        emb = doc.get("embedding")
+        if not emb:
+            continue
+        e = np.array(emb, dtype=np.float32)
+        e_norm = np.linalg.norm(e)
+        if e_norm < 1e-10:
+            continue
+        sim = float(np.dot(q, e / e_norm))
+        chunk = AttachmentChunk(
+            id=doc["_id"],
+            attachment_id=doc["attachment_id"],
+            page_id=doc["page_id"],
+            chunk_index=doc["chunk_index"],
+            text=doc.get("text", ""),
+            embedding=doc["embedding"],
+            timestamp=doc.get("timestamp"),
+            is_deleted=doc.get("is_deleted", False),
+        )
+        scored.append((chunk, sim))
 
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored[:limit]

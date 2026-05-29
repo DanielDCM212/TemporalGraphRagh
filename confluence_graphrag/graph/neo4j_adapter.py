@@ -5,11 +5,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from .adapter import GraphStoreAdapter
-from .models import GraphEdge, GraphNode, RowEmbedding
+from .models import AttachmentChunk, GraphEdge, GraphNode, RowEmbedding
 
 logger = logging.getLogger(__name__)
 
-_PAGE_OWNED_TYPES = {"ConfPage", "Table", "Event"}
+_PAGE_OWNED_TYPES = {"ConfPage", "Table", "Event", "Attachment"}
 
 
 class Neo4jAdapter(GraphStoreAdapter):
@@ -171,6 +171,17 @@ class Neo4jAdapter(GraphStoreAdapter):
         before_date: Optional[datetime],
         limit: int,
     ) -> List[Tuple[RowEmbedding, float]]:
+        raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
+
+    async def upsert_attachment_chunks(self, chunks: List[AttachmentChunk]) -> None:
+        raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
+
+    async def vector_search_attachment_chunks(
+        self,
+        query_embedding: List[float],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[AttachmentChunk, float]]:
         raise NotImplementedError("vector embeddings not yet implemented for Neo4j")
 
     async def close(self) -> None:

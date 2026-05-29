@@ -35,3 +35,16 @@ class RowEmbedding:
     embedding: List[float]
     timestamp: Optional[datetime] = None
     is_deleted: bool = False
+
+
+@dataclass
+class AttachmentChunk:
+    """Per-chunk embedding for an extracted attachment, stored in graph_attachment_chunks."""
+    id: str                          # "{attachment_node_id}__chunk_{chunk_index}"
+    attachment_id: str               # Confluence attachment id
+    page_id: str
+    chunk_index: int
+    text: str
+    embedding: List[float]
+    timestamp: Optional[datetime] = None
+    is_deleted: bool = False

@@ -10,6 +10,7 @@ from ..entity_extraction import ExtractionConfig
 from ..graph import EmbeddingService, GraphConfig, SemanticRetriever, create_adapter
 from ..graph.mongodb_adapter import MongoDBAdapter
 from ..ingestion.config import IngestionConfig
+from ..ingestion.confluence_client import ConfluenceClient
 from ..pipeline import build_pipeline
 from .routes.ingestion import router as ingestion_router
 from .routes.retrieval import router as retrieval_router
@@ -30,7 +31,8 @@ async def lifespan(app: FastAPI):
     adapter = MongoDBAdapter(ingestion_cfg.mongodb_uri, ingestion_cfg.mongodb_db)
     await adapter.ensure_indexes()
 
-    pipeline = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db)
+    confluence_client = ConfluenceClient(ingestion_cfg)
+    pipeline = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db, client=confluence_client)
 
     embedder  = EmbeddingService()
     retriever = SemanticRetriever(adapter=adapter, embedder=embedder)
@@ -46,6 +48,7 @@ async def lifespan(app: FastAPI):
 
     await pipeline.close()
     await adapter.close()
+    await confluence_client.close()
     mongo.close()
     logger.info("GraphRAG API shut down")
 

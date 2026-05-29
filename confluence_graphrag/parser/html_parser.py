@@ -305,7 +305,6 @@ class HTMLContentParser:
                 provenance=provenance,
             ))
 
-        print("!!!! ATTACHMENTS: ", attachments, " !!!!")
         # Confluence ac:image / ri:attachment tags
         for ac_img in tag.find_all('ac:image'):
             if self._has_table_ancestor(ac_img, tag):

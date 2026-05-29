@@ -3,12 +3,20 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
+from ..attachment_processor.chunking import chunk_text
+from ..attachment_processor.models import ExtractedAttachment
 from ..entity_extraction.models import EntitySet
 from ..parser.models import ContentTree, TextStyle
 from .adapter import GraphStoreAdapter
-from .embedder import EmbeddingService, build_event_text, build_page_text, build_row_text
+from .embedder import (
+    EmbeddingService,
+    build_attachment_chunk_text,
+    build_event_text,
+    build_page_text,
+    build_row_text,
+)
 from .factory import GraphConfig
-from .models import GraphEdge, GraphNode, RowEmbedding
+from .models import AttachmentChunk, GraphEdge, GraphNode, RowEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +52,10 @@ class TemporalGraphBuilder:
     # ------------------------------------------------------------------
 
     async def ingest_page(
-        self, entity_set: EntitySet, content_tree: ContentTree
+        self,
+        entity_set: EntitySet,
+        content_tree: ContentTree,
+        attachments: Optional[List[ExtractedAttachment]] = None,
     ) -> None:
         page_id   = entity_set.page_id
         page_date = entity_set.page_date
@@ -135,10 +146,14 @@ class TemporalGraphBuilder:
                     relation="HAS_EVENT",
                 ))
 
-        # 7. Embeddings (page, events, table rows)
-        await self._embed_page(entity_set, content_tree)
+        # 7. Attachment nodes
+        if attachments:
+            await self._ingest_attachments(attachments, page_id, page_date)
 
-        # 8. Graphiti episodic memory
+        # 8. Embeddings (page, events, table rows, attachment chunks)
+        await self._embed_page(entity_set, content_tree, attachments or [])
+
+        # 9. Graphiti episodic memory
         await self._add_graphiti_episode(entity_set, content_tree)
 
         logger.info(
@@ -204,6 +219,69 @@ class TemporalGraphBuilder:
         ))
 
     # ------------------------------------------------------------------
+    # Attachments (Stage 3A)
+    # ------------------------------------------------------------------
+
+    async def _ingest_attachments(
+        self,
+        attachments: List[ExtractedAttachment],
+        page_id: str,
+        page_date,
+    ) -> None:
+        for att in attachments:
+            if att.error:
+                logger.warning(
+                    "Skipping attachment '%s' graph node due to extraction error: %s",
+                    att.filename, att.error,
+                )
+                continue
+
+            node_id = f"{page_id}_att_{att.attachment_id}"
+            prov = att.provenance
+
+            # Determine origin and location metadata
+            if prov.table_chain:
+                origin = "table"
+                last_table = prov.table_chain[-1]
+                location: dict = {
+                    "table_index": last_table.table_index,
+                    "row": prov.row,
+                    "col": prov.col,
+                }
+            else:
+                origin = "page"
+                location = {}
+
+            chunk_count = len(chunk_text(
+                att.text,
+                size=self._config.attachment_chunk_size if self._config else 1000,
+                overlap=self._config.attachment_chunk_overlap if self._config else 150,
+            )) if att.text else 0
+
+            await self._adapter.upsert_node(GraphNode(
+                id=node_id,
+                type="Attachment",
+                properties={
+                    "attachment_id":  att.attachment_id,
+                    "filename":       att.filename,
+                    "attachment_type": att.attachment_type.value,
+                    "page_id":        page_id,
+                    "source":         att.source,
+                    "chunk_count":    chunk_count,
+                    "provenance_path": prov.to_path(),
+                    "origin":         origin,
+                    **location,
+                },
+                timestamp=page_date,
+            ))
+            await self._adapter.upsert_edge(GraphEdge(
+                source_id=f"page_{page_id}",
+                target_id=node_id,
+                relation="HAS_ATTACHMENT",
+                properties={"filename": att.filename},
+            ))
+
+    # ------------------------------------------------------------------
     # Embedding (Stage 6)
     # ------------------------------------------------------------------
 
@@ -214,10 +292,18 @@ class TemporalGraphBuilder:
             )
         return self._embedder
 
-    async def _embed_page(self, entity_set: EntitySet, content_tree: ContentTree) -> None:
-        embedder = self._get_embedder()
+    async def _embed_page(
+        self,
+        entity_set: EntitySet,
+        content_tree: ContentTree,
+        attachments: Optional[List[ExtractedAttachment]] = None,
+    ) -> None:
+        embedder  = self._get_embedder()
         page_id   = entity_set.page_id
         page_date = entity_set.page_date
+
+        chunk_size    = getattr(self._config, "attachment_chunk_size",    1000)
+        chunk_overlap = getattr(self._config, "attachment_chunk_overlap", 150)
 
         # Build all texts in one list to batch the API call
         page_text = build_page_text(content_tree)
@@ -235,7 +321,24 @@ class TemporalGraphBuilder:
                 if text:
                     row_items.append((table_id, row_idx, text, page_date))
 
-        all_texts = [page_text] + event_texts + [r[2] for r in row_items]
+        # Attachment chunks: (attachment_node_id, chunk_index, chunk_text, timestamp)
+        att_chunk_items: List[tuple] = []
+        for att in (attachments or []):
+            if att.error or not att.text:
+                continue
+            node_id = f"{page_id}_att_{att.attachment_id}"
+            for chunk_idx, chunk in enumerate(chunk_text(att.text, chunk_size, chunk_overlap)):
+                enriched = build_attachment_chunk_text(
+                    att.filename, chunk, content_tree.page_title, page_date
+                )
+                att_chunk_items.append((node_id, att.attachment_id, chunk_idx, enriched, page_date))
+
+        all_texts = (
+            [page_text]
+            + event_texts
+            + [r[2] for r in row_items]
+            + [a[3] for a in att_chunk_items]
+        )
 
         try:
             all_embeddings = await embedder.aembed_many(all_texts)
@@ -258,7 +361,7 @@ class TemporalGraphBuilder:
             idx += 1
 
         row_embeddings: List[RowEmbedding] = []
-        for (table_id, row_idx, row_text, ts), emb in zip(row_items, all_embeddings[idx:]):
+        for (table_id, row_idx, row_text, ts), emb in zip(row_items, all_embeddings[idx:idx + len(row_items)]):
             row_embeddings.append(RowEmbedding(
                 id=f"{table_id}__row_{row_idx}",
                 table_id=table_id,
@@ -268,13 +371,31 @@ class TemporalGraphBuilder:
                 embedding=emb,
                 timestamp=ts,
             ))
+        idx += len(row_items)
 
         if row_embeddings:
             await self._adapter.upsert_row_embeddings(row_embeddings)
 
+        att_chunks: List[AttachmentChunk] = []
+        for (node_id, att_id, chunk_idx, chunk_text_val, ts), emb in zip(
+            att_chunk_items, all_embeddings[idx:]
+        ):
+            att_chunks.append(AttachmentChunk(
+                id=f"{node_id}__chunk_{chunk_idx}",
+                attachment_id=att_id,
+                page_id=page_id,
+                chunk_index=chunk_idx,
+                text=chunk_text_val,
+                embedding=emb,
+                timestamp=ts,
+            ))
+
+        if att_chunks:
+            await self._adapter.upsert_attachment_chunks(att_chunks)
+
         logger.debug(
-            "Embedded page %s — 1 page + %d events + %d rows",
-            page_id, len(event_texts), len(row_embeddings),
+            "Embedded page %s — 1 page + %d events + %d rows + %d attachment chunks",
+            page_id, len(event_texts), len(row_embeddings), len(att_chunks),
         )
 
     # ------------------------------------------------------------------

@@ -50,12 +50,28 @@ class PageEntityExtractor:
     # Public API
     # ------------------------------------------------------------------
 
-    async def extract(self, content_tree: ContentTree) -> EntitySet:
+    async def extract(
+        self,
+        content_tree: ContentTree,
+        extra_texts: Optional[List[Tuple[str, str]]] = None,
+    ) -> EntitySet:
+        """
+        Extract entities from a parsed page.
+
+        *extra_texts* is an optional list of (text, provenance_path) pairs
+        from attachment content (Stage 3A).  These are merged with the page
+        text chunks before regex and LLM scanning so IDs/events inside
+        attached files are captured with their attachment provenance path.
+        """
         page_id   = content_tree.page_id
         page_date = content_tree.page_date
 
         # 1. Collect text chunks (skip propagated cells to avoid duplicate IDs)
         chunks = self._collect_text_chunks(content_tree)
+
+        # Append attachment text chunks (already has attachment provenance paths)
+        if extra_texts:
+            chunks.extend(extra_texts)
 
         # 2. Regex scan — fast, zero-cost, deduplicates across chunks
         regex_candidates = self._scanner.scan_many(chunks)

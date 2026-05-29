@@ -39,6 +39,7 @@ class SemanticRetriever:
         query: str,
         node_types: Optional[List[str]] = None,
         include_table_rows: bool = True,
+        include_attachments: bool = True,
         before_date: Optional[datetime] = None,
         limit: int = 20,
         query_date: Optional[datetime] = None,
@@ -91,6 +92,30 @@ class SemanticRetriever:
                         "table_id":  row.table_id,
                         "page_id":   row.page_id,
                         "row_index": row.row_index,
+                    },
+                ))
+
+        if include_attachments:
+            chunk_hits = await self._adapter.vector_search_attachment_chunks(
+                query_embedding=query_embedding,
+                before_date=before_date,
+                limit=candidate_limit,
+            )
+            for chunk, sim in chunk_hits:
+                ts = chunk.timestamp
+                t_score = temporal_score(ts, query_date) if ts else 1.0
+                results.append(RetrievalResult(
+                    node_id=chunk.id,
+                    node_type="AttachmentChunk",
+                    text=chunk.text,
+                    timestamp=ts,
+                    semantic_score=sim,
+                    temporal_score=t_score,
+                    combined_score=sim * t_score,
+                    properties={
+                        "attachment_id": chunk.attachment_id,
+                        "page_id":       chunk.page_id,
+                        "chunk_index":   chunk.chunk_index,
                     },
                 ))
 

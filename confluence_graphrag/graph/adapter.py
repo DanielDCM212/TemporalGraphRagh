@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional, Tuple
 
-from .models import GraphEdge, GraphNode, RowEmbedding
+from .models import AttachmentChunk, GraphEdge, GraphNode, RowEmbedding
 
 
 class GraphStoreAdapter(ABC):
@@ -96,6 +96,21 @@ class GraphStoreAdapter(ABC):
         limit: int,
     ) -> List[Tuple[RowEmbedding, float]]:
         """Cosine similarity search over table row embeddings."""
+        ...
+
+    @abstractmethod
+    async def upsert_attachment_chunks(self, chunks: List[AttachmentChunk]) -> None:
+        """Bulk upsert per-chunk attachment embeddings into the attachment chunks collection."""
+        ...
+
+    @abstractmethod
+    async def vector_search_attachment_chunks(
+        self,
+        query_embedding: List[float],
+        before_date: Optional[datetime],
+        limit: int,
+    ) -> List[Tuple[AttachmentChunk, float]]:
+        """Cosine similarity search over graph_attachment_chunks."""
         ...
 
     @abstractmethod

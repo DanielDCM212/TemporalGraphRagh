@@ -75,3 +75,20 @@ def build_row_text(headers: List[str], row: list) -> str:
         if cell_text:
             parts.append(f"{header}: {cell_text}")
     return " | ".join(parts)
+
+
+def build_attachment_chunk_text(
+    filename: str,
+    chunk: str,
+    page_title: str,
+    page_date,
+) -> str:
+    """
+    Add light context around an attachment text chunk so it retrieves well
+    even without the surrounding document.
+    """
+    return (
+        f"File: {filename}\n"
+        f"Page: {page_title} | Date: {page_date.strftime('%Y-%m-%d')}\n"
+        f"{chunk}"
+    )

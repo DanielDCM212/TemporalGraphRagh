@@ -62,7 +62,7 @@ async def run_batch(
 
     client   = ConfluenceClient(ingestion_cfg)
     log      = IngestionLog(ingestion_cfg)
-    pipeline = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db)
+    pipeline = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db, client=client)
     ingestor = BatchIngestor(ingestion_cfg, client, log)
 
     if page_ids:
@@ -91,7 +91,7 @@ async def run_incremental(space_key: str) -> None:
 
     client         = ConfluenceClient(ingestion_cfg)
     log            = IngestionLog(ingestion_cfg)
-    pipeline       = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db)
+    pipeline       = build_pipeline(ingestion_cfg, extraction_cfg, graph_cfg, db, client=client)
     upsert_handler = UpsertHandler(ingestion_cfg, client, log)
     watcher        = IncrementalWatcher(ingestion_cfg, client, log, upsert_handler)
 
