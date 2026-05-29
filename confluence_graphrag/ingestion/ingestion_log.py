@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 from pymongo import ASCENDING
 
 from .config import IngestionConfig
@@ -25,7 +25,7 @@ class IngestionLog:
     """
 
     def __init__(self, config: IngestionConfig):
-        client = motor.motor_asyncio.AsyncIOMotorClient(config.mongodb_uri)
+        client = AsyncMongoClient(config.mongodb_uri)
         self._col = client[config.mongodb_db][_COLLECTION]
 
     async def setup_indexes(self) -> None:
@@ -62,7 +62,7 @@ class IngestionLog:
             {"status": IngestionStatus.ERROR, "retry_count": {"$lt": max_retry}},
             {"page_id": 1},
         )
-        docs = await cursor.to_list(length=None)
+        docs = await cursor.to_list()
         return [d["page_id"] for d in docs]
 
     # ── Write ─────────────────────────────────────────────────────────────────

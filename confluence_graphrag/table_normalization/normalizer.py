@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 
 from confluence_graphrag.ingestion.config import IngestionConfig
 from confluence_graphrag.parser.models import ParsedTable
@@ -117,7 +117,7 @@ class IncrementalNormalizer:
         self._store = store
         self._consolidator = TableConsolidator()
 
-        client = motor.motor_asyncio.AsyncIOMotorClient(config.mongodb_uri)
+        client = AsyncMongoClient(config.mongodb_uri)
         self._db = client[config.mongodb_db]
 
     async def normalize_table(

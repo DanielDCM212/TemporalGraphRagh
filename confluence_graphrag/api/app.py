@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 from fastapi import FastAPI
 
 from ..entity_extraction import ExtractionConfig
@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     extraction_cfg = ExtractionConfig()
     graph_cfg      = GraphConfig()
 
-    mongo  = motor.motor_asyncio.AsyncIOMotorClient(ingestion_cfg.mongodb_uri)
+    mongo  = AsyncMongoClient(ingestion_cfg.mongodb_uri)
     db     = mongo[ingestion_cfg.mongodb_db]
 
     # Shared adapter (MongoDB) — used by both pipeline and retrieval routes

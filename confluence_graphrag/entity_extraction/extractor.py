@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-import motor.motor_asyncio
+from pymongo.asynchronous.database import AsyncDatabase
 
 from ..parser.models import ContentTree, ParsedCell, ParsedTable, TextStyle
 from .config import ExtractionConfig
@@ -38,7 +38,7 @@ class PageEntityExtractor:
     def __init__(
         self,
         config: Optional[ExtractionConfig] = None,
-        db: Optional[motor.motor_asyncio.AsyncIOMotorDatabase] = None,
+        db: Optional[AsyncDatabase] = None,
     ) -> None:
         self._config = config or ExtractionConfig()
         self._db = db

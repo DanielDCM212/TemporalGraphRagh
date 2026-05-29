@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 from pymongo import ASCENDING
 
 from confluence_graphrag.ingestion.config import IngestionConfig
@@ -25,7 +25,7 @@ class CanonicalSchemaStore:
     """
 
     def __init__(self, config: IngestionConfig) -> None:
-        client = motor.motor_asyncio.AsyncIOMotorClient(config.mongodb_uri)
+        client = AsyncMongoClient(config.mongodb_uri)
         self._col = client[config.mongodb_db][_COLLECTION]
 
     async def setup_indexes(self) -> None:

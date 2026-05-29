@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 import numpy as np
-import motor.motor_asyncio
+from pymongo import AsyncMongoClient
 
 from .adapter import GraphStoreAdapter
 from .models import GraphEdge, GraphNode, RowEmbedding
@@ -32,7 +32,7 @@ class MongoDBAdapter(GraphStoreAdapter):
     """
 
     def __init__(self, connection_string: str, database: str) -> None:
-        self._client     = motor.motor_asyncio.AsyncIOMotorClient(connection_string)
+        self._client     = AsyncMongoClient(connection_string)
         self._db         = self._client[database]
         self.nodes       = self._db["graph_nodes"]
         self.edges       = self._db["graph_edges"]
@@ -123,7 +123,7 @@ class MongoDBAdapter(GraphStoreAdapter):
         for _ in range(max_depth):
             edges = await self.edges.find(
                 {"source_id": {"$in": current_ids}, "relation": {"$in": relation_types}}
-            ).to_list(length=None)
+            ).to_list()
 
             next_ids = [e["target_id"] for e in edges if e["target_id"] not in visited]
             if not next_ids:
@@ -131,7 +131,7 @@ class MongoDBAdapter(GraphStoreAdapter):
 
             docs = await self.nodes.find(
                 {"_id": {"$in": next_ids}, "is_deleted": False}
-            ).to_list(length=None)
+            ).to_list()
 
             all_nodes.extend(self._doc_to_node(d) for d in docs)
             visited.update(next_ids)
@@ -166,7 +166,7 @@ class MongoDBAdapter(GraphStoreAdapter):
             query["timestamp"] = {"$lte": before_date}
 
         cursor = self.nodes.find(query).sort("timestamp", -1).limit(limit)
-        docs = await cursor.to_list(length=limit)
+        docs = await cursor.to_list(limit)
         return [self._doc_to_node(d) for d in docs]
 
     async def update_node_embedding(
@@ -206,7 +206,7 @@ class MongoDBAdapter(GraphStoreAdapter):
         if before_date:
             query["timestamp"] = {"$lte": before_date}
 
-        docs = await self.nodes.find(query).to_list(length=None)
+        docs = await self.nodes.find(query).to_list()
         return _cosine_rank_nodes(query_embedding, docs, limit, self._doc_to_node)
 
     async def vector_search_rows(
@@ -219,7 +219,7 @@ class MongoDBAdapter(GraphStoreAdapter):
         if before_date:
             query["timestamp"] = {"$lte": before_date}
 
-        docs = await self.row_embeddings.find(query).to_list(length=None)
+        docs = await self.row_embeddings.find(query).to_list()
         return _cosine_rank_rows(query_embedding, docs, limit)
 
     async def close(self) -> None:

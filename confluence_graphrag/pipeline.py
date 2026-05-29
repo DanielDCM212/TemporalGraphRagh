@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-import motor.motor_asyncio
+from pymongo.asynchronous.database import AsyncDatabase
 
 from .entity_extraction import ExtractionConfig, PageEntityExtractor
 from .graph import GraphConfig, TemporalGraphBuilder, create_adapter
@@ -74,7 +74,7 @@ def build_pipeline(
     ingestion_cfg: IngestionConfig,
     extraction_cfg: ExtractionConfig,
     graph_cfg: GraphConfig,
-    db: motor.motor_asyncio.AsyncIOMotorDatabase,
+    db: AsyncDatabase,
 ) -> FullPagePipeline:
     normalizer = IncrementalNormalizer(
         config=ingestion_cfg,

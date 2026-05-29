@@ -28,7 +28,7 @@ dependencies = [
     "numpy",
     # Graph
     "graphiti-core",
-    "motor",
+    "pymongo>=4.9",
     "neo4j",
     # API
     "fastapi",
