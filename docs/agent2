@@ -1,0 +1,383 @@
+# Diagram Agent — Project Reference
+
+Complete requirements to rebuild this project from scratch.
+
+---
+
+## Purpose
+
+An AI agent that generates diagrams from natural language and optional images. The user describes what they want in text and optionally attaches an image (screenshot, photo, hand-drawn sketch). The agent produces one of three output formats and saves the result to MongoDB.
+
+**Supported output formats:**
+- `drawio` — complete importable `<mxfile>` XML (draw.io / VS Code drawio extension)
+- `mermaid_sequence` — Mermaid `sequenceDiagram` code
+- `mermaid_flowchart` — Mermaid `flowchart TD/LR` code
+
+**Two interfaces:**
+1. `adk web` — browser dev UI for interactive testing (supports image upload)
+2. REST API — fire-and-forget HTTP service for other systems to call
+
+---
+
+## Tech Stack
+
+| Concern | Choice |
+|---|---|
+| Language | Python 3.12 |
+| Agent framework | Google ADK (`google-adk>=2.2.0`) |
+| LLM / multimodal | Gemini 2.5 Flash via Vertex AI |
+| XML validation | `defusedxml>=0.7` (never stdlib `xml.etree` — XXE risk) |
+| Database | MongoDB (`pymongo>=4.10`), local `mongodb://localhost:27017` |
+| REST API | FastAPI (`fastapi>=0.115`) + Uvicorn (`uvicorn[standard]>=0.30`) |
+| Package manager | `uv` |
+
+---
+
+## File Structure
+
+```
+Agent1/
+  pyproject.toml
+  test_validation.py          # smoke tests for validation.py
+  diagram_agent/
+    __init__.py               # exposes root_agent for adk web discovery
+    agent.py                  # root_agent = diagram_coordinator (LlmAgent)
+    tools.py                  # persist_diagram() + list_diagrams() ADK tool
+    validation.py             # validate_drawio() + validate_mermaid()
+    .env                      # Vertex AI + MongoDB config
+    prompts/
+      __init__.py
+      coordinator.py          # routing rules instruction
+      image_extractor.py      # structured extraction instruction
+      drawio.py               # mxfile generation rules + template
+      mermaid_sequence.py     # sequenceDiagram rules + syntax reference
+      mermaid_flowchart.py    # flowchart rules + syntax reference
+    sub_agents/
+      __init__.py
+      image_extractor.py      # LlmAgent, output_key="image_summary"
+      drawio_generator.py     # LoopAgent: drawio_writer + DiagramValidator("drawio")
+      mermaid_sequence.py     # LoopAgent: seq_writer + DiagramValidator("mermaid_sequence")
+      mermaid_flowchart.py    # LoopAgent: flow_writer + DiagramValidator("mermaid_flowchart")
+      validator.py            # DiagramValidator(BaseAgent) — shared, format-parametrized
+    api/
+      __init__.py
+      server.py               # FastAPI app: POST /diagrams, GET /diagrams/{job_id}, GET /healthz
+      jobs.py                 # MongoDB jobs collection CRUD + JobStatus constants
+      runner.py               # ADK Runner singleton + run_request() + persist_diagram call
+```
+
+---
+
+## Architecture
+
+### Agent graph
+
+```
+diagram_coordinator  (root_agent — LlmAgent, multimodal)
+│
+├── tools:
+│     AgentTool(image_extractor)   ← coordinator calls this; summary returns into context
+│     list_diagrams()              ← ADK tool for "show my diagrams" queries
+│
+└── sub_agents (coordinator transfers to one of these):
+      drawio_generator             LoopAgent(max_iterations=3)
+        drawio_writer              LlmAgent, output_key="diagram_code"
+        DiagramValidator("drawio") BaseAgent — validate only, no DB write
+      mermaid_sequence_generator   LoopAgent(max_iterations=3)
+        mermaid_sequence_writer    LlmAgent, output_key="diagram_code"
+        DiagramValidator("mermaid_sequence")
+      mermaid_flowchart_generator  LoopAgent(max_iterations=3)
+        mermaid_flowchart_writer   LlmAgent, output_key="diagram_code"
+        DiagramValidator("mermaid_flowchart")
+```
+
+### Request flow (API path)
+
+```
+POST /diagrams
+  → create_job() → jobs collection (status: pending)
+  → BackgroundTasks.add_task(_process_job)
+  ← 202 { job_id }   (returns immediately)
+
+_process_job() [background]
+  → set_running(job_id)
+  → run_request(text, image_bytes?, image_mime?, requested_format?)
+      → ADK Runner runs diagram_coordinator
+          → if image: call image_extractor tool → image_summary into state
+          → coordinator transfers to correct generator LoopAgent
+              → writer LlmAgent generates code → diagram_code into state
+              → DiagramValidator checks code
+                  → valid: sets final_format in state, escalates (loop stops)
+                  → invalid: sets validation_feedback in state (loop retries writer, max 3×)
+      ← agent run completes
+      → runner reads final_format + diagram_code from session state
+      → runner calls persist_diagram() → diagrams collection
+      ← returns { status, format, code, mongo_id }
+  → set_done(job_id, result)  OR  set_failed(job_id, error)
+  → if callback_url: POST result to caller
+
+GET /diagrams/{job_id}
+  ← { id, status, result: {format, code, mongo_id} | null, error | null, created_at, updated_at }
+```
+
+### Key separation of concerns
+
+- **Agent layer** — generation and validation only. Zero MongoDB imports. Zero HTTP imports.
+- **API layer (`runner.py`)** — owns all persistence. After the agent returns, `runner.py` calls `persist_diagram()`. This is the only place diagrams are written to MongoDB.
+- `DiagramValidator` — deterministic Python validator. On success: sets `final_format` in session state, escalates (stops the loop). On failure: writes error list to `validation_feedback` in state and yields an event (no escalate — loop retries).
+
+---
+
+## Routing Policy
+
+### Image attached
+1. Coordinator calls `image_extractor` tool → structured summary lands in `image_summary` state key.
+2. If user text explicitly names "mermaid sequence" / "sequence diagram" → transfer to `mermaid_sequence_generator`.
+3. If user text explicitly names "mermaid flowchart" / "flowchart" → transfer to `mermaid_flowchart_generator`.
+4. Otherwise (no format named, or drawio requested) → **default: transfer to `drawio_generator`**.
+
+### No image
+1. Route directly to the generator matching the format the user named.
+2. If format is ambiguous or not mentioned → ask: "Which format? (1) drawio XML  (2) Mermaid sequence  (3) Mermaid flowchart"
+
+---
+
+## Session State Contract
+
+Keys written during an agent run. Both agent and API layer read from these.
+
+| Key | Written by | Read by | Value |
+|---|---|---|---|
+| `image_summary` | `image_extractor` (via `output_key`) | coordinator prompt, generator writer prompts | Structured text description of the image |
+| `requested_format` | `runner.py` (initial state) | coordinator prompt | `"drawio"` \| `"mermaid_sequence"` \| `"mermaid_flowchart"` \| `None` |
+| `diagram_code` | Each writer LlmAgent (via `output_key`) | `DiagramValidator`, `runner.py` | Raw diagram code string (latest attempt) |
+| `validation_feedback` | `DiagramValidator` on failure | Writer LlmAgent prompt (`{validation_feedback?}`) | `list[str]` of error messages |
+| `final_format` | `DiagramValidator` on success | `runner.py` | The format that passed validation |
+| `diagram_title` | *(optional, unused currently)* | `runner.py` uses `text[:120]` as title instead | — |
+
+---
+
+## Validation Rules
+
+### `validate_drawio(code) -> (bool, list[str])`
+- Parse with `defusedxml.ElementTree.fromstring` (not stdlib — XXE/billion-laughs risk).
+- Strip markdown fences (` ```xml `, ` ```drawio `, ` ``` `) before parsing.
+- Assert `<mxGraphModel>` exists anywhere in the tree (DFS).
+- Assert `<mxGraphModel>` has a `<root>` child.
+- Assert `<root>` contains at least 2 `<mxCell>` elements (the two default parent cells `id=0`, `id=1` are always required).
+- Collect all failures; return `(False, errors)` on any failure.
+
+### `validate_mermaid(code, kind) -> (bool, list[str])`
+No pure-Python Mermaid grammar parser exists. Uses heuristics:
+- Strip markdown fences (` ```mermaid `, ` ``` `).
+- Non-empty after stripping comments (`%%`) and whitespace.
+- First significant line matches expected header:
+  - `mermaid_sequence` → `sequenceDiagram` (case-insensitive)
+  - `mermaid_flowchart` → `flowchart TD|TB|BT|LR|RL` or `graph TD|...`
+- At least one arrow/edge in the body:
+  - sequence: `-->>`, `->`, `->>`, `-->`, `->>`
+  - flowchart: `-->`, `---`, `-.->`, `===>`, `===`
+- Balanced `()`, `[]`, `{}` (ignoring content inside string literals `"..."` / `'...'`).
+
+**Upgrade seam:** `validate_mermaid`'s body can be replaced with a Node `mermaid.parse` call or a self-hosted Kroki HTTP check without changing the `DiagramValidator` or LoopAgent.
+
+---
+
+## MongoDB Schema
+
+### Collection: `diagrams` (env: `MONGODB_COLLECTION`)
+Holds successfully validated and persisted diagrams. Written by `runner.py` via `persist_diagram()`.
+
+```json
+{
+  "_id": ObjectId,
+  "title": "string (first 120 chars of the request text)",
+  "format": "drawio | mermaid_sequence | mermaid_flowchart",
+  "code": "string (full diagram source)",
+  "source": "image | text",
+  "session_id": "string",
+  "created_at": ISODate
+}
+```
+
+### Collection: `jobs`
+Tracks fire-and-forget API job lifecycle. Written by `api/jobs.py`.
+
+```json
+{
+  "_id": ObjectId,
+  "status": "pending | running | done | failed",
+  "request": {
+    "text": "string",
+    "format": "drawio | mermaid_sequence | mermaid_flowchart | null",
+    "image_mime": "image/png | ... | null",
+    "callback_url": "string | null"
+  },
+  "result": {
+    "status": "done",
+    "format": "string",
+    "code": "string",
+    "mongo_id": "string"
+  },
+  "error": "string | null",
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+Note: `image_base64` is intentionally **not** stored in the job doc (can be large); it is passed in memory during background processing only.
+
+---
+
+## REST API Contract
+
+### `POST /diagrams`
+Submit a diagram generation job. Returns immediately.
+
+**Request body:**
+```json
+{
+  "text": "required — description of the diagram",
+  "image_base64": "optional — base64-encoded image (PNG, JPEG, GIF, WEBP)",
+  "image_mime": "optional — required when image_base64 is set, e.g. 'image/png'",
+  "format": "optional — 'drawio' | 'mermaid_sequence' | 'mermaid_flowchart'",
+  "callback_url": "optional — URL to POST result to on completion"
+}
+```
+
+**Response: `202 Accepted`**
+```json
+{ "job_id": "string", "status": "pending" }
+```
+
+### `GET /diagrams/{job_id}`
+Poll for job status and result.
+
+**Response:**
+```json
+{
+  "id": "string",
+  "status": "pending | running | done | failed",
+  "result": { "format": "...", "code": "...", "mongo_id": "..." },
+  "error": "string | null",
+  "created_at": "ISO8601",
+  "updated_at": "ISO8601"
+}
+```
+
+### `GET /healthz`
+Pings MongoDB. Returns `200 { "status": "ok", "mongodb": "reachable" }` or `503` if MongoDB is unreachable.
+
+### Callback payload (when `callback_url` is provided)
+```json
+{
+  "job_id": "string",
+  "status": "done | failed",
+  "result": { "format": "...", "code": "...", "mongo_id": "..." },
+  "error": "string | null"
+}
+```
+Callback failures are silently ignored — they must not affect job state.
+
+---
+
+## Environment Configuration
+
+File: `diagram_agent/.env`
+
+```env
+GOOGLE_GENAI_USE_VERTEXAI=TRUE
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB=diagrams
+MONGODB_COLLECTION=diagrams
+```
+
+All three MongoDB env vars have defaults in code. Override for production (Atlas URI, different DB names).
+
+---
+
+## Agent Instructions Summary
+
+Each prompt lives in `diagram_agent/prompts/<name>.py` as a module-level `INSTRUCTION` string.
+
+| Agent | Key instruction points |
+|---|---|
+| `coordinator` | Routing rules (image → extractor → drawio default or explicit override; no image → named format or ask). Never generate diagrams itself. |
+| `image_extractor` | Output a structured summary: diagram type, direction, nodes (id/label/shape), edges (from/to/label/style), groups, annotations. Factual only — no business interpretation. |
+| `drawio_writer` | Must output complete `<mxfile>` XML in a ` ```xml ` fence. Must always include the two default `mxCell` (id=0, id=1). Must read `{validation_feedback?}` and fix exactly those issues on retry. |
+| `mermaid_sequence_writer` | First line must be exactly `sequenceDiagram`. Must read `{validation_feedback?}` on retry. Syntax reference included in prompt. |
+| `mermaid_flowchart_writer` | First line must be `flowchart TD` (or LR/BT/RL). Must read `{validation_feedback?}` on retry. Syntax reference + node shapes included in prompt. |
+
+All writer prompts reference two optional state variables:
+- `{image_summary?}` — present when the request included an image
+- `{validation_feedback?}` — present when a previous attempt failed validation
+
+---
+
+## Key Design Decisions
+
+**Agent never writes to MongoDB.** Persistence is owned entirely by `api/runner.py`. The agent is a pure generation + validation pipeline. This makes the agent reusable from both `adk web` and the API without side effects in the dev UI path.
+
+**`image_extractor` is an `AgentTool`, not a `sub_agent`.** Wired as `AgentTool(agent=image_extractor)` in the coordinator's `tools` list. This means the coordinator *calls* it and the summary returns into the coordinator's context — reliable structured handoff. If it were a `sub_agent`, control would transfer one-way and the coordinator could not easily read the summary before routing.
+
+**Generators are `sub_agents` (one-way transfer).** The coordinator transfers control to the chosen generator `LoopAgent`. The loop runs entirely within the generator; the coordinator does not need to know whether retries happened.
+
+**`DiagramValidator` is a `BaseAgent`, not a tool.** It participates in the `LoopAgent` as a full agent step, which is what allows `escalate=True` to stop the loop. A plain function or ADK tool cannot escalate.
+
+**`defusedxml` for all XML parsing.** Python's stdlib `xml.etree.ElementTree` is vulnerable to XXE and billion-laughs attacks on untrusted XML. Since the LLM produces the XML, it is untrusted input.
+
+**Mermaid validation is heuristic.** No pure-Python Mermaid grammar parser exists. The `validate_mermaid` function is the single upgrade seam — its body can be replaced with a Node `mermaid.parse` subprocess call or a self-hosted Kroki HTTP check without changing anything else.
+
+**Jobs do not store `image_base64`.** The image can be megabytes of base64. Only metadata (`text`, `format`, `image_mime`, `callback_url`) goes in the jobs collection. The image bytes are held in memory for the duration of the background task only.
+
+**`BackgroundTasks` for background execution.** Zero extra infrastructure; jobs survive the HTTP response but not process restarts. Upgrade path: replace `BackgroundTasks` with arq or Celery + Redis in `server.py` and `runner.py` only — the agent code does not change.
+
+---
+
+## Running the Project
+
+### Prerequisites
+```
+uv sync                              # installs all dependencies
+mongosh --eval "db.runCommand({ping:1})"   # confirm MongoDB is running
+gcloud auth application-default login      # Vertex AI ADC (already configured)
+```
+Edit `diagram_agent/.env` and set `GOOGLE_CLOUD_PROJECT` to your real project ID.
+
+### Dev UI (adk web)
+```
+adk web
+```
+Open browser → select `diagram_coordinator`. Supports image upload directly in the chat.
+
+### REST API
+```
+uvicorn diagram_agent.api.server:app --host 0.0.0.0 --port 8000
+```
+Swagger UI: `http://localhost:8000/docs`
+
+### Validation smoke tests
+```
+python test_validation.py
+```
+Expected: `15 / 15 tests passed.`
+
+---
+
+## Verification Checklist
+
+| # | Test | Expected |
+|---|---|---|
+| 1 | `GET /healthz` | `{"status":"ok","mongodb":"reachable"}` |
+| 2 | `POST /diagrams {"text":"flowchart of a login flow"}` | `202 {"job_id":"...","status":"pending"}` — returns immediately |
+| 3 | `GET /diagrams/{job_id}` after a few seconds | `{"status":"done","result":{"format":"mermaid_flowchart","code":"...","mongo_id":"..."}}` |
+| 4 | `POST /diagrams {"text":"sequence diagram for checkout: user → API → payment"}` | `done` with `format: mermaid_sequence` |
+| 5 | `POST /diagrams {"text":"diagram of this system","image_base64":"...","image_mime":"image/png"}` (no format) | Agent calls image_extractor, routes to drawio by default; `format: drawio` in result |
+| 6 | Same image + `"format":"mermaid_flowchart"` | Routes to flowchart generator instead; `format: mermaid_flowchart` |
+| 7 | Check MongoDB | `mongosh diagrams --eval "db.diagrams.find({},{title:1,format:1,source:1}).pretty()"` shows saved docs |
+| 8 | Import drawio result | Paste `code` from a `drawio` result into draw.io — file imports cleanly |
+| 9 | Retry loop test | Force `validate_drawio` to return `(False, [...])` for 3 iterations; confirm job ends `failed`, no new doc in `diagrams`, `jobs` doc has `error` field |
+| 10 | Callback test | POST with `callback_url`; confirm worker POSTs `{job_id, status, result}` to that URL on completion |
